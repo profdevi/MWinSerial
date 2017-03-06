@@ -13,12 +13,15 @@ Build Instructions
 Use NMake to build the windows version of the program.
 Switch to the src folder and compile with NMake.
 
+## Download Links 
 
-Windows Executable
--------------------
+The following links is for the direct download of the 32 bit executable with
+an MD5 digest of the executable.
 
-bin/MWinSerial.exe      	: precompiled version for windows 10/64 bit
-bin/MWinSerial.exe.md5		: MD5 Digest of the executable
+Windows 32-bit Binary : [MWinSerial.exe](bin/MWinSerial.exe)
+
+MD5 Digest for binary : [MWinSerial.exe.md5](bin/MWinSerial.exe.md5)
+
 
 
 ## License

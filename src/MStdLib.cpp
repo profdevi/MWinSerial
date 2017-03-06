@@ -30,7 +30,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
 
-//v2.10 copyright Comine.com 20160720W0608
+//v2.13 copyright Comine.com 20170124T1209
 /*
 Bug Notice:
 	MStdSPrintf(const wchar_t *)  seems to be failing.
@@ -58,6 +58,7 @@ Bug Notice:
 	#pragma comment(lib,"user32.lib")
 	#pragma comment(lib,"kernel32.lib")
 	#pragma comment(lib,"advapi32.lib")
+	#pragma comment(lib,"rpcrt4.lib")
 	#endif
 
 ///////////////////////////////////////////
@@ -74,6 +75,7 @@ Bug Notice:
 #include <math.h>
 #include <wchar.h>
 #include <pwd.h>
+#include <uuid/uuid.h>
 #endif
 
 //***************************************************
@@ -81,6 +83,7 @@ Bug Notice:
 //***************************************************
 static char GTempBuffer[100]="";
 static wchar_t GTempWideBuffer[100]=L"";
+
 
 //***************************************************
 //** Functions
@@ -349,6 +352,7 @@ int MStdFileWrite(MStdFileHandle handle,const void *buffer
 int MStdFileRead(MStdFileHandle handle,void *buffer
 		,int elementsize,int elementcount)
 	{
+	if(elementcount==0) { return 0; }
 	int newcount=(int)fread(buffer,elementsize,elementcount,(FILE *)handle);
 	return newcount;
 	}
@@ -1356,6 +1360,85 @@ bool MStdFileRename(const char *filesrc,const char *filetarget)
 	}
 
 
+///////////////////////////////////////////////////
+bool MStdFileCopy(const char *srcfile,const char *dstfile,bool stopifexists,bool erroronfail)
+	{
+	//////////////////////////////////////
+	#if ( defined(MSTDLIB_API_WINDOWS) )
+	BOOL checkexists;
+	if(stopifexists==true) { checkexists=TRUE;  } else { checkexists=FALSE; }
+
+	if(CopyFileA(srcfile,dstfile,checkexists)==FALSE)
+		{
+		if(stopifexists==true)
+			{
+			return false;
+			}
+
+		if(erroronfail==false)
+			{
+			return false;
+			}
+
+		return false;
+		}
+
+	return true;
+
+	/////////////////////////////////////
+	#elif (defined(MSTDLIB_API_LINUX) )
+	if(stopifexists==true && Exists(dstfile)==true)
+		{
+		return false;
+		}
+
+	MBuffer buffer;
+	if(buffer.Create(2048)==false)
+		{
+		return false;
+		}
+
+	int fdsrc=open(srcfile,O_RDONLY);
+	if(fdsrc<0)
+		{
+		return false;
+		}
+
+	int fddst=open(dstfile,O_WRONLY|O_CREAT|O_TRUNC,0666);
+	if(fddst<0)
+		{
+		close(fdsrc);
+		return false;
+		}
+
+	int readamount;
+	int writeamount;
+	for(;;)
+		{
+		readamount=read(fdsrc,buffer.GetBuffer(),buffer.GetSize());
+		if(readamount<=0)
+			{
+			break;
+			}
+
+		writeamount=write(fddst,buffer.GetBuffer(),readamount);
+		if(writeamount<=0)
+			{
+			break;
+			}
+		}
+	
+
+	close(fdsrc);
+	close(fddst);
+	buffer.Destroy();
+	return true;
+	#endif // MSTDLIB_API_WINDOWS
+
+	return false;	
+	}
+
+
 //////////////////////////////////////////////////
 bool MStdFileExists(const char *filename)
 	{
@@ -1382,6 +1465,101 @@ bool MStdFileExists(const char *filename)
 
 
 //////////////////////////////////////////////////
+bool MStdFileIsBinary(const char *filename)
+	{
+	MStdAssert(filename!=0 && *filename!=0);
+	MStdFileHandle file=MStdFileOpen(filename,"rb");
+	if(file==NULL)
+		{
+		return false;
+		}
+
+	for( ; ; )
+		{
+		unsigned char ch;
+		if(MStdFileRead(file,&ch,1,1)!=1) { break; }
+		if(ch==0 || ch>127)
+			{
+			// Non Ascii
+			MStdFileClose(file);
+			return true;
+			}
+		}
+
+	MStdFileClose(file);
+	return false;
+	}
+
+
+//////////////////////////////////////////////////
+bool MStdFileReadText(const char *filename,char *buffer,int &size)
+	{
+	if(filename==NULL || *filename==0 || buffer==NULL || size<=1)
+		{
+		size=0; return false;
+		}
+
+	// Check if file is binary
+	if(MStdFileExists(filename)==false || MStdFileIsBinary(filename)==true)
+		{
+		size=0; return false;
+		}
+
+	// Read from file
+	MStdFileHandle file=MStdFileOpen(filename,"rb");
+	if(file==NULL)
+		{
+		return true;
+		}
+
+	int len=MStdFileRead(file,buffer,1,size-1);
+	if(len<0)
+		{
+		size=0;  MStdFileClose(file);  return false;
+		}
+
+	MStdFileClose(file);
+	buffer[len]=0;
+	size=len;
+	return true;	
+	}
+
+
+/////////////////////////////////////////////////////
+bool MStdFileWriteText(const char *filename,const char *data)
+	{
+	MStdAssert(filename!=0 && *filename!=0 && data!=0);
+	if(filename==NULL || *filename==0 || data==NULL )
+		{
+		return false;
+		}
+
+	// Open the file for writing
+	MStdFileHandle file=MStdFileOpen(filename,"wb");
+	if(file==NULL)
+		{
+		return false;
+		}
+
+	const int len=MStdStrLen(data);
+	if(len==0)
+		{
+		MStdFileClose(file);
+		return true;		
+		}
+
+	if(MStdFileWrite(file,data,1,len)!=len)
+		{
+		MStdFileClose(file);
+		return false;
+		}
+
+	MStdFileClose(file);
+	return true;
+	}
+
+
+//////////////////////////////////////////////////
 bool MStdExec(const char *cmd)
 	{
 	#if defined(MSTDLIB_OS_WINDOWSRT)
@@ -1400,6 +1578,89 @@ bool MStdExec(const char *cmd)
 	#endif 
 	}
 
+
+//////////////////////////////////////////////////
+bool MStdPathGetAbsolute(const char *filename, char *retbuffer,int &retbuflen)
+	{
+	/////////////////////////////////////////////////////
+	#if ( defined(MSTDLIB_API_WINDOWS) )
+	char buffer[MStdPathMaxSize];
+
+	if(filename==NULL || *filename==0)
+		{
+		return false;
+		}
+
+	char *filenameonly=NULL;
+	DWORD length=GetFullPathNameA(filename,sizeof(buffer),buffer-2,&filenameonly);
+	if(length==0)
+		{
+		return false;
+		}
+
+	if(length>=(DWORD)sizeof(buffer)-2 )
+		{
+		return false;
+		}
+
+	// Convert to Canonical Path with \ converted to /
+	MStdPathSetSlash(buffer);
+
+	MStdStrCpy(retbuffer,retbuflen,buffer);
+
+	return true;
+
+	/////////////////////////////////////////////////
+	#elif (defined(MSTDLIB_API_LINUX) )
+	char buffer[PATH_MAX];
+	if(buffer.Create(PATH_MAX)==false)
+		{
+		return false;
+		}
+
+	if(Exists(filename)==true)
+		{
+		if(realpath(filename,buffer)==NULL)
+			{
+			return false;
+			}
+		}
+	else if(*filename=='/')
+		{
+		//File is already an absolute path
+		MStdStrCpy(buffer,filename);
+		}
+	else
+		{
+		// Build up path using cwd
+		char *bufptr=buffer;
+		getcwd(bufptr,sizeof(buffer) );
+
+		int length=MStdStrLen(bufptr);
+		if(length<=0)
+			{
+			return false;
+			}
+
+		if(bufptr[length-1]!='/')
+			{
+			buffer.StringAppend("/");
+			}
+
+		buffer.StringAppend(filename);
+		}
+	
+
+	if(absolutepath.Create(buffer.GetBuffer())==false)
+		{
+		return false;
+		}
+
+	return true;
+	#endif // MSTDLIB_API_WINDOWS
+
+	return false;
+	}
 
 //////////////////////////////////////////////////
 int MStdAToI(const char *str)
@@ -1970,6 +2231,49 @@ int MStdRand(int maxvalue)
 
 
 ///////////////////////////////////////////////////
+bool MStdGetUUID(char buf[],int buflen)
+	{
+	MStdAssert(buf!=0 && buflen>=37);
+
+	////////////////////////////
+	#if defined(MSTDLIB_OS_WINDOWSRT)
+	return false;
+
+	#elif (defined(MSTDLIB_OS_WINDOWS) || defined(MSTDLIB_OS_WINDOWSOLD) || defined(MSTDLIB_OS_MINGW) )
+	UUID newuuid;
+	if(UuidCreate(&newuuid)!=RPC_S_OK)
+		{
+		return false;
+		}
+
+	char *uuidstr;
+	if(UuidToStringA(&newuuid,(RPC_CSTR *)&uuidstr)!=RPC_S_OK)
+		{
+		return false;
+		}
+
+	if(MStdStrCpy(buf,buflen,uuidstr)==false)
+		{
+		// Unable to copy UUID string to output
+		}
+
+	RpcStringFreeA((RPC_CSTR *)&uuidstr);
+	MStdStrToLower(buf);
+	return true;
+
+	////////////////////////////
+	#elif (defined(MSTDLIB_OS_LINUX) || defined(MSTDLIB_OS_OTHER) || defined(MSTDLIB_OS_MACOS) || defined(MSTDLIB_OS_IPHONE) )
+	uuid_t newuuid;
+	uuid_generate(newuuid);
+	uuid_unparse(newuuid,buf);
+	MStdStrToLower(buf);
+	return true;
+
+	#endif // MSTDLIB_OS_WINDOWS	
+	return true;
+	}
+
+///////////////////////////////////////////////////
 unsigned int MStdGetTimeOfDay(void)
 	{
 	////////////////////////////
@@ -2377,6 +2681,224 @@ bool MStdStrCpy(MStdArray<char> &strout,const wchar_t *str)
 		}
 
 	MStdStrCpy(strout.Get(),strout.GetLength(),str);
+	return true;
+	}
+
+
+//////////////////////////////////////////////////
+bool MStdPathSetSlash(char *path)
+	{
+	MStdAssert(path!=NULL);
+	char *p;
+	for(p=path;*p!=0;++p)
+		{
+		if(*p=='\\'){  *p = '/';  }
+		}
+
+	// Remove Trailing / if it exists
+	if(p>path && *(p-1)=='/')
+		{
+		*(p-1)=0;
+		}
+
+	return true;	
+	}
+
+
+//////////////////////////////////////////////////////////
+bool MStdPathGetAbsolute(const char *filename,MStdArray<char> &absolutepath)
+	{
+	if(filename==NULL || *filename==0)
+		{
+		return false;
+		}
+
+	if(absolutepath.Create(MStdPathMaxSize)==false)
+		{
+		return false;
+		}
+
+	/////////////////////////////////////////////////////
+	#if ( defined(MSTDLIB_API_WINDOWS) )
+
+	char *filenameonly=NULL;
+	DWORD length=GetFullPathNameA(filename,absolutepath.GetLength()-2,
+			absolutepath.Get(),&filenameonly);
+	if(length==0)
+		{
+		return false;
+		}
+
+	if(length>=(DWORD)absolutepath.GetLength())
+		{
+		return false;
+		}
+
+	// Convert to Canonical Path with \ converted to /
+	MStdPathSetSlash(absolutepath.Get() );
+	
+	return true;
+	/////////////////////////////////////////////////
+	#elif (defined(MSTDLIB_API_LINUX) )
+
+	if(MStdFileExists(filename)==true)
+		{
+		if(realpath(filename,absolutepath.Get())==NULL)
+			{
+			return false;
+			}
+
+		return true;
+		}
+	else if(*filename=='/')
+		{
+		//File is already an absolute path
+		MStdStrCpy(absolutepath.Get(),absolutepath.GetLength()-2,filename);
+		return true;
+		}
+	else
+		{
+		// Build up path using cwd
+		char *bufptr=absolutepath.Get();
+		getcwd(bufptr,absolutepath.GetLength() );
+
+		int length=MStdStrLen(bufptr);
+		if(length<=0)
+			{
+			return false;
+			}
+
+		if(bufptr[length-1]!='/')
+			{
+			MStdStrCat(bufptr,absolutepath.GetLength(),"/");
+			}
+
+		MStdStrCat(bufptr,absolutepath.GetLength(),filename);
+		return true;
+		}
+
+	#endif // MSTDLIB_API_WINDOWS
+
+	return false;
+	}
+
+
+////////////////////////////////////////////////////////////////
+bool MStdDirGet(MStdArray<char> &path)
+	{
+	if(path.Create(MStdPathMaxSize)==false)
+		{
+		return false;
+		}
+
+	#if ( defined(MSTDLIB_OS_WINDOWS) || defined(MSTDLIB_OS_WINDOWSOLD) || defined(MSTDLIB_OS_MINGW) )
+	
+	DWORD dlen;
+	char *buffer=path.Get();
+	dlen=GetCurrentDirectoryA(path.GetLength()-2,path.Get());
+	if(dlen>=DWORD(path.GetLength()-2) || dlen<=1)
+		{
+		
+		return false;
+		}
+
+	// Ref http://msdn.microsoft.com/en-us/library/windows/desktop/aa364934%28v=vs.85%29.aspx
+	if(buffer[dlen-1]!='\\' && buffer[dlen-1]!='/' )
+		{
+		buffer[dlen]='/';
+		buffer[dlen+1]=0;
+		}
+
+	// Convert all \ -> /
+	int i;
+	for(i=0;buffer[i]!=0;++i)
+		{
+		if(buffer[i]=='\\') { buffer[i]='/'; }
+		}
+	
+	return true;	
+
+	////////////////////////////////////////
+	#elif ( defined(MSTDLIB_OS_LINUX) || defined(MSTDLIB_OS_OTHER) || defined(MSTDLIB_OS_MACOS) || defined(MSTDLIB_OS_IPHONE) )
+	char *buffer=path.Get();
+	const char *retval=getcwd(buffer,bufferlen-1);
+	if(retval==NULL)
+		{
+		return false;
+		}
+
+	const int pathlen=MStdStrLen(buffer);
+	if(buffer[pathlen-1]!='/')
+		{
+		buffer[pathlen]='/';
+		buffer[pathlen+1]=0;
+		}
+
+	return true;
+
+	#endif
+
+	return false;	
+	}
+
+
+/////////////////////////////////////////////////////////////
+bool MStdFileReadText(const char *filename,MStdArray<char> &data)
+	{
+	if(filename==NULL || *filename==0)
+		{
+		return false;
+		}
+
+	// Check if file exists
+	if(MStdFileExists(filename)==false)
+		{
+		return false;
+		}
+
+	// Check if file is binary
+	if(MStdFileIsBinary(filename)==true)
+		{
+		return false;
+		}
+
+	// Read from file
+	MStdFileHandle file=MStdFileOpen(filename,"rb");
+	if(file==NULL)
+		{
+		return true;
+		}
+
+	// seek to end of file
+	MStdFileSeek(file,0,2);
+
+	long filesize=MStdFileTell(file);
+	if(filesize<0)
+		{
+		MStdFileClose(file);
+		return true;
+		}
+
+	// Seek back to beginning
+	MStdFileSeek(file,0,0);
+
+	// Allocate buffer space
+	if(data.Create(filesize+1)==false)
+		{
+		MStdFileClose(file);
+		return false;
+		}
+
+	int len=MStdFileRead(file,data.Get(),1,filesize);
+	if(len!=filesize)
+		{
+		data.Destroy();
+		MStdFileClose(file);
+		return false;
+		}
+
+	MStdFileClose(file);
+	data.Get()[filesize]=0;
 	return true;
 	}
 
