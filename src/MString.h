@@ -30,7 +30,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
 
-//v3.1 copyright Comine.com 20170304S2237
+//v3.2 copyright Comine.com 20170409U0957
 #ifndef MString_h
 #define MString_h
 
@@ -99,6 +99,7 @@ class MString
 	int Compare(MString &string);
 	int Compare(MStringWide &string);
 	bool Write(MIWriter &writer) const;
+	bool Zero(void);										// zero out the memory
 
 	/////////////// Class Methods ////////////////////
 	// Basic String Copy

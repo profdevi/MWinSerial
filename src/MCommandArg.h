@@ -30,7 +30,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
 
-//v2.2 copyright Comine.com 20160701F0736
+//v2.3 copyright Comine.com 20170412W1700
 #ifndef MCommandArg_h
 #define MCommandArg_h
 
